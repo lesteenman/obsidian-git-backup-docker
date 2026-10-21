@@ -683,6 +683,17 @@ case "${SYNC_CONFLICT_STRATEGY}" in
      exit 1 ;;
 esac
 
+# Empty means none. An empty line in .env (or a cleared Unraid field) used
+# to mean the default, so say so loudly.
+if [ -z "${SYNC_FILE_TYPES}" ]; then
+  log "WARNING: OBSIDIAN_GIT_SYNC_FILE_TYPES is set but empty: no attachments will sync."
+  log "  Remove the variable to use the default (all types)."
+fi
+if [ -z "${SYNC_CONFIGS}" ]; then
+  log "WARNING: OBSIDIAN_GIT_SYNC_CONFIGS is set but empty: no .obsidian settings will sync."
+  log "  Remove the variable to use the default (all categories)."
+fi
+
 log "Configuring sync filter settings..."
 log "  File types: ${SYNC_FILE_TYPES:-(none)}"
 log "  Configs:    ${SYNC_CONFIGS:-(none)}"

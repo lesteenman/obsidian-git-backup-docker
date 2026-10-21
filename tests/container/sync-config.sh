@@ -12,6 +12,7 @@ call="$(sync_config_call)"
 echo "  (${call})"
 check "empty OBSIDIAN_GIT_SYNC_CONFIGS disables config sync" 'printf "%s\n" "${call}" | grep -Eq -- "--configs( +--| *$)"'
 check "file types keep their default" 'printf "%s\n" "${call}" | grep -q -- "--file-types image,audio,video,pdf,unsupported"'
+check "empty configs warned about" 'logs | grep -q "WARNING: OBSIDIAN_GIT_SYNC_CONFIGS is set but empty"'
 check "conflict strategy passed through" 'printf "%s\n" "${call}" | grep -q -- "--conflict-strategy conflict"'
 docker rm -f "${CTR}" >/dev/null
 
