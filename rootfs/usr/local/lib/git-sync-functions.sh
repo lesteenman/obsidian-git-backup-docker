@@ -313,7 +313,7 @@ do_commit_and_push() {
   # (e.g. a stale index.lock) must not look like "No changes to commit".
   if ! add_output="$(git -C "${VAULT}" add -A 2>&1)"; then
     log_error "git add failed: ${add_output}"
-    mark_unhealthy "git add failed"
+    mark_unhealthy "git add failed; see docker logs"
     return 1
   fi
 
@@ -337,7 +337,7 @@ do_commit_and_push() {
     log "Committed: ${COMMIT_MSG}"
   else
     log_error "git commit failed"
-    mark_unhealthy "git commit failed"
+    mark_unhealthy "git commit failed; see docker logs"
     return 1
   fi
 
@@ -359,7 +359,7 @@ do_commit_and_push() {
   log_error "git push failed (${push_failures} consecutive failure(s)):"
   log_error "${push_output}"
   log_error "Your commit is saved locally. Push will be retried on the next change or periodic pull."
-  mark_unhealthy "push failed ${push_failures} time(s)"
+  mark_unhealthy "push failed ${push_failures} time(s); see docker logs for the git error"
 
   if [ "${push_failures}" -ge 5 ]; then
     log_error "WARNING: ${push_failures} consecutive push failures. Backup is NOT reaching the remote."
@@ -375,7 +375,7 @@ do_commit_and_push() {
 do_periodic_pull() {
   if ! do_pull; then
     log_error "Periodic pull failed (will retry next interval)"
-    mark_unhealthy "pull failed"
+    mark_unhealthy "pull failed; see docker logs for the git error"
     return 1
   fi
 
@@ -395,7 +395,7 @@ do_periodic_pull() {
     mark_healthy
   else
     log_error "Push after periodic pull failed: ${push_output}"
-    mark_unhealthy "push failed"
+    mark_unhealthy "push failed; see docker logs for the git error"
     return 1
   fi
 }
@@ -416,10 +416,12 @@ check_repo_state() {
   for _state in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD; do
     if [ -e "${VAULT}/.git/${_state}" ]; then
       log_error "Interrupted git operation found in ${VAULT} (.git/${_state})."
-      log_error "Not touching the vault until it is resolved by hand: in the vault"
-      log_error "volume on the host, \`git status\` shows what is in progress. Keep the"
-      log_error "files Obsidian should have, finish or abort the operation, then start"
-      log_error "the container again."
+      log_error "Not touching the vault until it is resolved by hand. With the container"
+      log_error "stopped, open a shell on the vault volume (named volume or host folder):"
+      log_error "  docker run --rm -it -v <vault volume>:/vault --entrypoint sh <image>"
+      log_error "  cd /vault && git status"
+      log_error "Keep the files Obsidian should have, run 'git rebase --abort' or"
+      log_error "'git merge --abort' (or finish it), then start the container again."
       return 1
     fi
   done

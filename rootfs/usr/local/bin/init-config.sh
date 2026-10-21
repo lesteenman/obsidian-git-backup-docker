@@ -182,8 +182,9 @@ else
       log_error "  ${_entry}"
     done
     log_error "Refusing to clone into it, so nothing there is overwritten or deleted."
-    log_error "Move the files out and start again with an empty /vault: the vault is"
-    log_error "cloned from git, and Obsidian Sync downloads anything not in git."
+    log_error "This happens when /vault points at an existing vault folder. Point /vault"
+    log_error "at a new, empty folder or volume instead: the vault is cloned from git,"
+    log_error "and Obsidian Sync downloads anything not in git."
     exit 1
   fi
 
