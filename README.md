@@ -240,8 +240,9 @@ You should see:
 | `OBSIDIAN_GIT_DEBOUNCE_SECS` | No | `30` | Seconds of quiet before committing. Must be a positive integer. For large vaults, consider 60+. |
 | `OBSIDIAN_GIT_PULL_INTERVAL` | No | `3600` | How often (seconds) to pull remote changes when no local files have changed. Set to `0` to pull only before each push. Minimum `10` when enabled. |
 | `OBSIDIAN_GIT_E2EE_PASSWORD` | No | — | E2E encryption password |
-| `OBSIDIAN_GIT_SYNC_FILE_TYPES` | No | `image,audio,video,pdf,unsupported` | Which attachment types **Obsidian Sync downloads** to disk. Separate from LFS. See [Sync Filtering](#sync-filtering). |
-| `OBSIDIAN_GIT_SYNC_CONFIGS` | No | *(all categories)* | `.obsidian` config categories to sync, including community plugins. See [Sync Filtering](#sync-filtering). |
+| `OBSIDIAN_GIT_SYNC_FILE_TYPES` | No | `image,audio,video,pdf,unsupported` | Which attachment types **Obsidian Sync downloads** to disk. Set but empty means none. Separate from LFS. See [Sync Filtering](#sync-filtering). |
+| `OBSIDIAN_GIT_SYNC_CONFIGS` | No | *(all categories)* | `.obsidian` config categories to sync, including community plugins. Set but empty means none. See [Sync Filtering](#sync-filtering). |
+| `OBSIDIAN_GIT_SYNC_CONFLICT_STRATEGY` | No | `merge` | What obsidian-headless does when a note changed both in the vault and on another device: `merge` combines them, `conflict` keeps both as separate files. |
 | `OBSIDIAN_GIT_LFS_ENABLED` | No | `false` | Store binary attachments via **Git LFS** instead of directly in git. Separate from sync filtering. See [Git LFS](#git-lfs-large-file-storage). |
 | `OBSIDIAN_GIT_LFS_EXTENSIONS` | No | *(see below)* | File extensions **git** stores via LFS. Separate from sync filtering. |
 | `PUID` | No | `1000` | Your host user ID. Needed for bind mounts — run `id -u` to find it. |
@@ -448,6 +449,13 @@ plugin data):
 
 ```sh
 OBSIDIAN_GIT_SYNC_CONFIGS=app,appearance,appearance-data,hotkey,core-plugin,core-plugin-data
+```
+
+To sync no `.obsidian` settings at all, set the variable to an empty value
+(unset means the default list):
+
+```sh
+OBSIDIAN_GIT_SYNC_CONFIGS=
 ```
 
 ## Git LFS (Large File Storage)
