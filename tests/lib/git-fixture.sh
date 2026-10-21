@@ -36,7 +36,8 @@ new_fixture() {
 
 # claude_commit <shell command run in claude/> — commit and push it to remote
 claude_commit() {
-  (cd "${W}/claude" && eval "$1" && g add -A && g commit -qm "claude: $1" && g push -q origin main)
+  (cd "${W}/claude" && { g pull -q --ff-only origin main 2>/dev/null || true; } &&
+    eval "$1" && g add -A && g commit -qm "claude: $1" && g push -q origin main)
 }
 
 # One watcher cycle, as triggered by a file event.
