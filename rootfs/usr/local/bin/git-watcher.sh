@@ -188,7 +188,7 @@ while true; do
       fi
       # Timeout — no local changes, but the remote may have advanced.
       log "No local changes in ${PULL_INTERVAL}s. Checking remote..."
-      do_periodic_pull
+      do_periodic_pull || true  # failures are logged and set the health status
       continue
     fi
   else
