@@ -320,6 +320,13 @@ do_commit_and_push() {
   # Only commit if there are actual changes
   if git -C "${VAULT}" diff --cached --quiet; then
     log "No changes to commit"
+    # The watcher is alive and git works. Keep an "ok" status fresh, so a
+    # stream of events that never leaves room for the periodic pull does not
+    # look like a hung watcher; an earlier error stays until a pull or push
+    # succeeds.
+    if read -r _state _ < "${HEALTH_FILE}" 2>/dev/null && [ "${_state}" = ok ]; then
+      mark_healthy
+    fi
     return 0
   fi
 

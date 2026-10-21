@@ -61,4 +61,16 @@ printf 'ok %s\n' "$(( $(date +%s) - 4 * 3600 ))" > "${HEALTH_FILE}"
 check "unhealthy after 3 pull intervals" '! OBSIDIAN_GIT_PULL_INTERVAL=3600 healthcheck'
 check "no age limit with periodic pull disabled" 'OBSIDIAN_GIT_PULL_INTERVAL=0 healthcheck'
 
+echo "busy watcher with nothing to commit stays healthy"
+new_fixture
+printf 'ok %s\n' "$(( $(date +%s) - 4 * 3600 ))" > "${HEALTH_FILE}"
+cycle
+check "ok status refreshed" 'OBSIDIAN_GIT_PULL_INTERVAL=3600 healthcheck'
+
+echo "nothing to commit does not hide an earlier error"
+new_fixture
+printf 'error %s push failed\n' "$(date +%s)" > "${HEALTH_FILE}"
+cycle
+check "still unhealthy" '! healthcheck'
+
 finish
