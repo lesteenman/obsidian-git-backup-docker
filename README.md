@@ -663,12 +663,13 @@ across array start/stop cycles.
 Run one container per vault. To add another vault, install the template
 again with:
 - A different container name (e.g., `obsidian-git-backup-work`)
+- Different config path (e.g., `/mnt/user/appdata/obsidian-git-backup/config-work`)
 - Different vault path (e.g., `/mnt/user/appdata/obsidian-git-backup/vault-work`)
 - A different vault name and git remote URL
 
-Containers can share the same config path — it only contains the SSH key
-and SSH settings, which are safe to share. Only the vault path must be
-unique per container.
+Do not share a config path between containers: besides the SSH key, it
+holds obsidian-headless's sync state and the health status, which belong to
+one vault. To reuse an SSH key, copy `id_ed25519` into each config path.
 
 Each container counts as one device on your Obsidian Sync plan — check
 your plan's device limit at [obsidian.md/account](https://obsidian.md/account).
