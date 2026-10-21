@@ -16,6 +16,9 @@ services:
     # build: .
     container_name: obsidian-git-backup
     restart: unless-stopped
+    # On stop, the watcher commits and pushes pending changes. Docker's
+    # default of 10 seconds before SIGKILL can cut that push off.
+    stop_grace_period: 30s
 
     # All configuration is loaded from the env file.
     # PUID/PGID for bind mount permissions are set here too.
@@ -33,8 +36,9 @@ services:
       #   Place your key at ./obsidian-config/id_ed25519, then use:
       # - ./obsidian-config:/config
 
-      # OPTIONAL: Vault data. If not mounted, data is re-synced from
-      # Obsidian Sync and re-cloned from git on container recreation.
+      # REQUIRED: Vault data. Keep it with /config: obsidian-headless's sync
+      # state lives in /config and describes these files. A vault re-cloned
+      # from git on every recreation would not match that state.
       - obsidian-vault:/vault
 
 volumes:
