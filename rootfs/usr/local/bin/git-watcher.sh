@@ -93,7 +93,18 @@ cleanup() {
 # ---------------------------------------------------------------------------
 # Graceful shutdown: commit any pending changes before exit
 # ---------------------------------------------------------------------------
+# A signal that arrives during a cycle only sets stop_requested: the trap
+# runs between commands, and a second commit/pull/push started from inside
+# the running one would interleave with it. run_cycle calls shutdown when
+# the cycle is done.
+in_cycle=false
+stop_requested=false
+
 shutdown() {
+  if "${in_cycle}"; then
+    stop_requested=true
+    return 0
+  fi
   log "Shutting down — committing any pending changes..."
   do_commit_and_push || log_error "Final commit/push failed"
   cleanup
@@ -102,6 +113,17 @@ shutdown() {
 
 trap shutdown TERM INT
 trap cleanup EXIT
+
+# run_cycle <command...> — run one commit/pull/push step, then honour a
+# stop requested meanwhile.
+run_cycle() {
+  in_cycle=true
+  "$@" || true   # failures are logged and set the health status
+  in_cycle=false
+  if "${stop_requested}"; then
+    shutdown
+  fi
+}
 
 # ---------------------------------------------------------------------------
 # Main: watch for filesystem events and debounce
@@ -129,7 +151,7 @@ fi
 # (and push commits a previous run could not), instead of waiting a full
 # pull interval. Also gives the healthcheck its first status.
 log "Checking remote for changes made while stopped..."
-do_periodic_pull || true
+run_cycle do_periodic_pull
 
 log "Git repository found. Watching for changes..."
 
@@ -188,7 +210,7 @@ while true; do
       fi
       # Timeout — no local changes, but the remote may have advanced.
       log "No local changes in ${PULL_INTERVAL}s. Checking remote..."
-      do_periodic_pull || true  # failures are logged and set the health status
+      run_cycle do_periodic_pull
       continue
     fi
   else
@@ -213,7 +235,7 @@ while true; do
   [ "${debounce_count}" -gt 0 ] && log "Debounced ${debounce_count} additional change(s)"
   log "Committing changes..."
 
-  do_commit_and_push || log_error "Commit/push cycle failed (will retry on next change)"
+  run_cycle do_commit_and_push
 done < "${EVENTS_FIFO}"
 
 # If we get here, inotifywait exited unexpectedly
