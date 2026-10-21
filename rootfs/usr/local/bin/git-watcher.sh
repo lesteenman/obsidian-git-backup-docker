@@ -118,6 +118,11 @@ while [ ! -d "${VAULT}/.git" ]; do
   sleep 5
 done
 
+if ! check_repo_state; then
+  # Stay up instead of exiting: s6 would restart the watcher in a loop.
+  exec sleep infinity
+fi
+
 log "Git repository found. Watching for changes..."
 
 # inotifywait monitors recursively, excluding noisy paths.

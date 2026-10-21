@@ -238,8 +238,12 @@ do_pull() {
 # Commit and push any staged changes
 # ---------------------------------------------------------------------------
 do_commit_and_push() {
-  # Stage everything (use -C to avoid cd side effects)
-  git -C "${VAULT}" add -A
+  # Stage everything (use -C to avoid cd side effects). A failure here
+  # (e.g. a stale index.lock) must not look like "No changes to commit".
+  if ! add_output="$(git -C "${VAULT}" add -A 2>&1)"; then
+    log_error "git add failed: ${add_output}"
+    return 1
+  fi
 
   # Only commit if there are actual changes
   if git -C "${VAULT}" diff --cached --quiet; then
@@ -304,4 +308,35 @@ do_periodic_pull() {
   else
     log_error "Periodic pull failed (will retry next interval)"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# Check the repository before the watcher starts
+#
+# Returns 1 if a rebase, merge, cherry-pick or revert was interrupted (for
+# example, the container was killed mid-way). Aborting it automatically
+# would reset the working tree, and ob sync would upload the reverted files
+# to every device, so that is left to a human.
+#
+# Removes a leftover index.lock: nothing else runs git in this container
+# before the watcher starts, so a lock now is from a killed process. Left
+# in place, every `git add` would fail.
+# ---------------------------------------------------------------------------
+check_repo_state() {
+  for _state in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD; do
+    if [ -e "${VAULT}/.git/${_state}" ]; then
+      log_error "Interrupted git operation found in ${VAULT} (.git/${_state})."
+      log_error "Not touching the vault until it is resolved by hand, e.g.:"
+      log_error "  docker exec -it -u obsidian <container> git -C ${VAULT} status"
+      log_error "Keep the files Obsidian should have, finish or abort the operation,"
+      log_error "then restart the container."
+      return 1
+    fi
+  done
+
+  if [ -e "${VAULT}/.git/index.lock" ]; then
+    log "Removing stale ${VAULT}/.git/index.lock left by an interrupted git process"
+    rm -f "${VAULT}/.git/index.lock"
+  fi
+  return 0
 }
