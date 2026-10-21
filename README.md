@@ -25,6 +25,8 @@ full history.
 - [Volumes](#volumes)
 - [User / Group Identifiers (PUID/PGID)](#user--group-identifiers-puidpgid)
 - [Architecture](#architecture)
+- [Changes Made in Git](#changes-made-in-git)
+- [Health Check](#health-check)
 - [Multiple Vaults](#multiple-vaults)
 - [Sync Filtering](#sync-filtering)
 - [Git LFS (Large File Storage)](#git-lfs-large-file-storage)
@@ -35,6 +37,7 @@ full history.
   - [After Installing](#after-installing)
   - [Multiple Vaults on Unraid](#multiple-vaults-on-unraid)
   - [Troubleshooting on Unraid](#troubleshooting-on-unraid)
+- [Development](#development)
 - [Publishing](#publishing)
 - [Limitations (PoC)](#limitations-poc)
 
@@ -79,8 +82,11 @@ Obsidian Sync ──> obsidian-headless ──> vault directory ──> inotifyw
 2. A **filesystem watcher** (inotifywait) detects when files change.
 3. After a configurable **debounce period** (default 30s of quiet), all
    changes are committed and pushed to your git remote.
-4. A **periodic pull** (default every hour) checks the remote for
-   changes even when no local files have changed.
+4. A **periodic pull** (default every hour, and once at start) checks the
+   remote for changes even when no local files have changed.
+5. Changes pushed to the git remote by anyone else (you, a script, an AI
+   assistant) are written into the vault, and obsidian-headless uploads
+   them to Obsidian Sync. See [Changes Made in Git](#changes-made-in-git).
 
 The container uses [s6-overlay](https://github.com/just-containers/s6-overlay)
 for process supervision — both services are monitored and automatically
@@ -249,7 +255,7 @@ the `OBSIDIAN_GIT_` prefix because it's not a variable defined by this project.
 | Path | Required | Description |
 |---|---|---|
 | `/config` | **Yes** | Persistent configuration and SSH keys. Must survive restarts. Named volume (default) or bind mount (see [Option B](#option-b-bring-your-own-ssh-key-bind-mount)). |
-| `/vault` | No | Vault data and git working tree. Can be re-synced/re-cloned if lost. |
+| `/vault` | **Yes** | Vault data and git working tree. Must persist together with `/config`, which holds obsidian-headless's sync state for these files. Must be empty (or contain this container's git clone) on start: the container refuses to clone over existing files. |
 
 ## User / Group Identifiers (PUID/PGID)
 
@@ -305,7 +311,66 @@ base
 - **git-watcher**: Monitors `/vault` with `inotifywait` as the `obsidian`
   user. Debounces, then commits and pushes. Auto-restarted by s6 if it
   crashes. On graceful shutdown, any pending changes in the debounce window
-  are committed.
+  are committed and pushed; `docker-compose.yml` sets `stop_grace_period:
+  30s` so a slow push is not cut off by Docker's default 10 seconds.
+
+obsidian-headless keeps its sync state in `/config/xdg/obsidian-headless`
+(`XDG_CONFIG_HOME=/config/xdg`), so a recreated container resumes syncing
+instead of starting over.
+
+## Changes Made in Git
+
+The git remote is not only a backup: anything pushed to it is brought into
+the vault on the next pull (at start, before each push, and every
+`OBSIDIAN_GIT_PULL_INTERVAL` seconds), and Obsidian Sync then delivers it to
+your devices.
+
+The watcher never runs `git rebase` or `git merge` in the vault, because
+obsidian-headless would upload whatever intermediate state that leaves
+behind. It applies the remote changes file by file instead:
+
+| Situation | Result |
+|---|---|
+| File changed in git only | Git version written to the vault |
+| Markdown note changed on both sides, different lines | Both changes merged |
+| File changed on both sides, overlapping (or not Markdown) | Vault version kept; git version saved next to it as `<name> (GitHub conflict <date> <time>).<ext>` |
+| Deleted in git, unchanged in the vault | Deleted |
+| Deleted in git, changed in the vault | Vault version kept |
+| Changed in git, deleted in the vault | Stays deleted; git version saved as a conflict copy |
+
+Conflict copies appear in Obsidian like any other note. Merge them by hand
+and delete the copy. Each conflict is also logged as an `ERROR: CONFLICT:`
+line.
+
+On a **first start** (fresh clone), obsidian-headless has no sync state and
+resolves differences between the clone and Obsidian Sync by modification
+time. The container gives cloned files the time of the last commit, so edits
+made in Obsidian after that commit win.
+
+If a previous version of this image was killed in the middle of a `git
+rebase` or `git merge`, the container now stops at start with an error
+instead of touching the vault. Resolve it in the vault volume on the host
+(`git status` shows what is in progress), then start the container again.
+
+> **Security:** anyone who can push to the git remote can change your vault
+> on every device. With the default `OBSIDIAN_GIT_SYNC_CONFIGS`, that
+> includes community plugin code (`.obsidian/plugins/*/main.js`), which
+> Obsidian runs. Restrict push access, or set `OBSIDIAN_GIT_SYNC_CONFIGS` to
+> exclude `community-plugin-data` (see [Config categories](#config-categories)).
+
+## Health Check
+
+The image has a Docker `HEALTHCHECK`. The container is **unhealthy** when
+the watcher's last commit, pull or push failed, or when none succeeded for
+three pull intervals (no age limit with `OBSIDIAN_GIT_PULL_INTERVAL=0`).
+The reason is shown by:
+
+```sh
+docker inspect --format '{{json .State.Health}}' obsidian-git-backup
+```
+
+The status comes from `/config/health`, written by the watcher after every
+pull and push.
 
 ## Multiple Vaults
 
@@ -599,6 +664,24 @@ echo 524288 > /proc/sys/fs/inotify/max_user_watches
 grep -q 'max_user_watches' /boot/config/go || \
   echo 'echo 524288 > /proc/sys/fs/inotify/max_user_watches' >> /boot/config/go
 ```
+
+## Development
+
+The test suite builds the image and runs everything in Docker; no Obsidian
+account or network access is needed (obsidian-headless is replaced by a
+stub):
+
+```sh
+tests/run.sh                          # everything
+tests/run.sh tests/unit/conflicts.sh  # one file
+SKIP_BUILD=1 tests/run.sh             # reuse the last build
+```
+
+- `tests/unit/` — the git sync functions (`rootfs/usr/local/lib/git-sync-functions.sh`)
+  against local repositories, inside the image so BusyBox and git versions
+  match production.
+- `tests/container/` — the whole container (s6, init, watcher) with a stub
+  `ob`.
 
 ## Publishing
 
