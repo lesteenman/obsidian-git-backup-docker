@@ -2,8 +2,22 @@
 # Stub obsidian-headless for container tests: no network, no account.
 # Records each call (with XDG_CONFIG_HOME) in /config/ob-calls.log;
 # "sync" idles like the real long-running `ob sync --continuous`.
+#
+# Like the real ob, keeps per-vault sync state under
+# ${XDG_CONFIG_HOME:-$HOME/.config}/obsidian-headless/sync/, and logs
+# whether that state already existed when `ob sync` started.
 echo "XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-} ob $*" >> /config/ob-calls.log
+state_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/obsidian-headless/sync/stub-vault"
 case "$1" in
-  sync) trap 'exit 0' TERM INT; while :; do sleep 1; done ;;
+  sync)
+    if [ -f "${state_dir}/state.db" ]; then
+      echo "stub-ob: resuming from existing state" >> /config/ob-calls.log
+    else
+      echo "stub-ob: no state, initial sync" >> /config/ob-calls.log
+      mkdir -p "${state_dir}" && touch "${state_dir}/state.db"
+    fi
+    trap 'exit 0' TERM INT
+    while :; do sleep 1; done
+    ;;
   *) exit 0 ;;
 esac

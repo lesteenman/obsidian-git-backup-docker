@@ -131,6 +131,17 @@ ENV PUID=1000
 ENV PGID=1000
 
 # ---------------------------------------------------------------------------
+# obsidian-headless state location
+#
+# ob keeps its per-vault sync state (state.db) and settings under
+# $XDG_CONFIG_HOME/obsidian-headless. Keep them on the /config volume: in
+# the container's home directory they were lost on every recreate, and
+# each new container then ran an "initial" sync, which ignores deletions
+# made on other devices and resolves differences by modification time only.
+# ---------------------------------------------------------------------------
+ENV XDG_CONFIG_HOME=/config/xdg
+
+# ---------------------------------------------------------------------------
 # Git pull interval — how often to check the remote for changes (seconds)
 #
 # When no local files have changed for this many seconds, the watcher pulls
