@@ -85,8 +85,11 @@ _blob_at() {
 }
 
 # _place <file in INTEGRATE_TMP> <vault-relative destination>
+# Records the destination in INTEGRATE_TMP/placed, see do_pull.
 _place() {
-  mkdir -p "$(dirname "${VAULT}/$2")" && mv -f "${VAULT}/${INTEGRATE_TMP}/$1" "${VAULT}/$2"
+  mkdir -p "$(dirname "${VAULT}/$2")" &&
+    mv -f "${VAULT}/${INTEGRATE_TMP}/$1" "${VAULT}/$2" &&
+    printf '%s\n' "$2" >> "${VAULT}/${INTEGRATE_TMP}/placed"
 }
 
 # _conflict_name "dir/note.md" -> "dir/note (GitHub conflict 2026-10-21 0915).md"
@@ -228,14 +231,22 @@ do_pull() {
       failed=true
     }
   done < "${VAULT}/${INTEGRATE_TMP}/changes"
-  rm -rf "${VAULT:?}/${INTEGRATE_TMP}"
 
   if "${failed}"; then
+    rm -rf "${VAULT:?}/${INTEGRATE_TMP}"
     log_error "Integration of origin/${BRANCH} incomplete (will retry next cycle)"
     return 1
   fi
 
+  # `add -A` skips files the vault's .gitignore matches. Force-add what was
+  # written here, or the merge commit would delete those files on the remote.
   _vgit add -A || { log_error "git add failed"; return 1; }
+  touch "${VAULT}/${INTEGRATE_TMP}/placed"
+  while IFS= read -r path; do
+    _vgit add -f -- "${path}" || { log_error "git add failed: ${path}"; return 1; }
+  done < "${VAULT}/${INTEGRATE_TMP}/placed"
+  rm -rf "${VAULT:?}/${INTEGRATE_TMP}"
+
   tree="$(_vgit write-tree)" &&
     commit="$(_vgit commit-tree "${tree}" -p HEAD -p "${remote}" \
       -m "merge origin/${BRANCH} (conflict copies: ${conflicts})")" &&
