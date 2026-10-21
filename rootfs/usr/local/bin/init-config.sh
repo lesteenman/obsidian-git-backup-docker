@@ -535,7 +535,8 @@ if "${FRESH_CLONE}"; then
         --diff-merges=first-parent --no-renames --format='@%ct' --name-only HEAD |
       awk '/^@[0-9]+$/ { t = substr($0, 2); next } NF && !seen[$0]++ { print t "\t" $0 }' |
       while IFS="$(printf '\t')" read -r _time _path; do
-        [ -e "/vault/${_path}" ] && touch -c -d "@${_time}" "/vault/${_path}"
+        # -h: set the time of a symlink itself, never of its target
+        [ -e "/vault/${_path}" ] && touch -h -c -d "@${_time}" "/vault/${_path}"
       done
     log "Set each cloned file's modification time to its last commit,"
     log "  so newer edits already in Obsidian Sync win the initial sync"
