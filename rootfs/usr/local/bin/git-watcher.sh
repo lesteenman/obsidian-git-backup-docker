@@ -155,12 +155,14 @@ log "Git repository found. Watching for changes..."
 #
 # inotifywait writes to the FIFO in the background. The main loop
 # reads from the FIFO, keeping traps active in the main process.
+# Only events go to the FIFO; inotifywait's messages on stderr (setup
+# notices, errors such as running out of watches) go to the log.
 
 inotifywait -m -r \
   --exclude '/\.(git|trash)(/|$)|/\.obsidian/(workspace.*\.json|graph\.json|cache/)' \
   -e modify,create,delete,move \
   --format '%w%f' \
-  "${VAULT}" > "${EVENTS_FIFO}" 2>&1 &
+  "${VAULT}" > "${EVENTS_FIFO}" &
 INOTIFY_PID=$!
 
 # Main event loop — reads from the FIFO (not a pipe subshell).
