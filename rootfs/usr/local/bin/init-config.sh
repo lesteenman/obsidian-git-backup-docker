@@ -629,9 +629,20 @@ for _cat in $(printf '%s' "${SYNC_CONFIGS}" | tr ',' ' '); do
   esac
 done
 
+# Conflict strategy for changes made both in the vault (here: by git) and on
+# another device: "merge" (ob's default) merges Markdown automatically;
+# "conflict" keeps both versions as separate files.
+SYNC_CONFLICT_STRATEGY="${OBSIDIAN_GIT_SYNC_CONFLICT_STRATEGY:-merge}"
+case "${SYNC_CONFLICT_STRATEGY}" in
+  merge|conflict) ;;
+  *) log_error "OBSIDIAN_GIT_SYNC_CONFLICT_STRATEGY must be 'merge' or 'conflict', got: '${SYNC_CONFLICT_STRATEGY}'"
+     exit 1 ;;
+esac
+
 log "Configuring sync filter settings..."
 log "  File types: ${SYNC_FILE_TYPES:-(none)}"
 log "  Configs:    ${SYNC_CONFIGS:-(none)}"
+log "  Conflicts:  ${SYNC_CONFLICT_STRATEGY}"
 
 # Reset $@ for step 9 — must not inherit step 8's --vault/--password args
 set -- --path /vault
@@ -641,6 +652,9 @@ set -- "$@" --file-types "${SYNC_FILE_TYPES}"
 
 # --configs: which .obsidian config categories to sync
 set -- "$@" --configs "${SYNC_CONFIGS}"
+
+# --conflict-strategy: merge or conflict (see above)
+set -- "$@" --conflict-strategy "${SYNC_CONFLICT_STRATEGY}"
 
 # ob sync-config is a purely local config file operation — no auth token
 # needed. But run as obsidian user so config files keep correct ownership.
