@@ -16,6 +16,11 @@ case "$1" in
       echo "stub-ob: no state, initial sync" >> /config/ob-calls.log
       mkdir -p "${state_dir}" && touch "${state_dir}/state.db"
     fi
+    # Like ob's first download, STUB_INITIAL_FILE is written as soon as
+    # sync starts, possibly before the git watcher is watching.
+    if [ -n "${STUB_INITIAL_FILE:-}" ]; then
+      echo "downloaded at sync start" > "/vault/${STUB_INITIAL_FILE}"
+    fi
     trap 'exit 0' TERM INT
     while :; do sleep 1; done
     ;;

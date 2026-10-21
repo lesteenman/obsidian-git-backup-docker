@@ -83,9 +83,14 @@ remote_branch_verified=false
 # ---------------------------------------------------------------------------
 EVENTS_FIFO="$(mktemp -u /tmp/git-watcher-events.XXXXXX)"
 mkfifo "${EVENTS_FIFO}"
+# inotifywait's stderr goes through a second FIFO to a reader that copies
+# it to the log and creates WATCHES_READY once the watches exist.
+MESSAGES_FIFO="$(mktemp -u /tmp/git-watcher-messages.XXXXXX)"
+mkfifo "${MESSAGES_FIFO}"
+WATCHES_READY="$(mktemp -u /tmp/git-watcher-ready.XXXXXX)"
 
 cleanup() {
-  rm -f "${EVENTS_FIFO}"
+  rm -f "${EVENTS_FIFO}" "${MESSAGES_FIFO}" "${WATCHES_READY}"
   # Kill inotifywait if still running
   [ -n "${INOTIFY_PID:-}" ] && kill "${INOTIFY_PID}" 2>/dev/null || true
 }
@@ -147,12 +152,6 @@ if ! check_repo_state; then
   exec sleep infinity
 fi
 
-# Catch up with anything pushed to the remote while the container was down
-# (and push commits a previous run could not), instead of waiting a full
-# pull interval. Also gives the healthcheck its first status.
-log "Checking remote for changes made while stopped..."
-run_cycle do_periodic_pull
-
 log "Git repository found. Watching for changes..."
 
 # inotifywait monitors recursively, excluding noisy paths.
@@ -180,12 +179,38 @@ log "Git repository found. Watching for changes..."
 # Only events go to the FIFO; inotifywait's messages on stderr (setup
 # notices, errors such as running out of watches) go to the log.
 
+while IFS= read -r _message; do
+  printf '%s\n' "${_message}" >&2
+  case "${_message}" in
+    "Watches established."*) : > "${WATCHES_READY}" ;;
+  esac
+done < "${MESSAGES_FIFO}" &
+
 inotifywait -m -r \
   --exclude '/\.(git|trash)(/|$)|/\.obsidian/(workspace.*\.json|graph\.json|cache/)' \
   -e modify,create,delete,move \
   --format '%w%f' \
-  "${VAULT}" > "${EVENTS_FIFO}" &
+  "${VAULT}" > "${EVENTS_FIFO}" 2> "${MESSAGES_FIFO}" &
 INOTIFY_PID=$!
+
+# Open the events FIFO now: inotifywait cannot open it for writing, and so
+# does not start watching, until there is a reader. Events queue in the
+# FIFO until the main loop reads them.
+exec 3< "${EVENTS_FIFO}"
+
+# Wait until the watches exist, then catch up on everything they could not
+# see: files ob sync wrote while the watcher was starting (committed and
+# pushed), and remote changes made while the container was down. Also
+# gives the healthcheck its first status.
+_waited=0
+while [ ! -e "${WATCHES_READY}" ] && [ "${_waited}" -lt 300 ]; do
+  sleep 1
+  _waited=$((_waited + 1))
+done
+[ -e "${WATCHES_READY}" ] || log_error "inotify watches not confirmed after 300s; continuing"
+log "Committing changes made while the watcher was starting, checking remote..."
+run_cycle do_commit_and_push
+run_cycle do_periodic_pull
 
 # Main event loop — reads from the FIFO (not a pipe subshell).
 # This runs in the main shell process where trap shutdown TERM INT
@@ -236,7 +261,7 @@ while true; do
   log "Committing changes..."
 
   run_cycle do_commit_and_push
-done < "${EVENTS_FIFO}"
+done <&3
 
 # If we get here, inotifywait exited unexpectedly
 log_error "inotifywait exited unexpectedly. s6 will restart this service."
