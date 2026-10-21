@@ -125,6 +125,12 @@ if ! check_repo_state; then
   exec sleep infinity
 fi
 
+# Catch up with anything pushed to the remote while the container was down
+# (and push commits a previous run could not), instead of waiting a full
+# pull interval. Also gives the healthcheck its first status.
+log "Checking remote for changes made while stopped..."
+do_periodic_pull || true
+
 log "Git repository found. Watching for changes..."
 
 # inotifywait monitors recursively, excluding noisy paths.
