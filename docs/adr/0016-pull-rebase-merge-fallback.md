@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-0021](0021-file-by-file-pull-with-conflict-copies.md)
+(conflict resolution). The periodic pull described here still applies.
 
 ## Context
 
