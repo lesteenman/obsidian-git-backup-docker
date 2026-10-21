@@ -159,6 +159,14 @@ clean_vault() {
 
 if [ -d "/vault/.git" ]; then
   log "Git repository already exists at /vault"
+
+  # A rebase or merge interrupted by a container kill must be resolved by
+  # hand. Stop here so neither git nor ob sync touches the vault: ob sync
+  # would upload the half-finished state (conflict markers, files missing)
+  # to every device.
+  VAULT=/vault
+  . /usr/local/lib/git-sync-functions.sh
+  check_repo_state || exit 1
   # Ensure remote is up to date
   run_as_user git -C /vault remote set-url origin "${OBSIDIAN_GIT_REMOTE_URL}" 2>/dev/null || true
 else

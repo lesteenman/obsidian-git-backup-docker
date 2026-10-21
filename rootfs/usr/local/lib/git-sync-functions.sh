@@ -354,10 +354,10 @@ check_repo_state() {
   for _state in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD; do
     if [ -e "${VAULT}/.git/${_state}" ]; then
       log_error "Interrupted git operation found in ${VAULT} (.git/${_state})."
-      log_error "Not touching the vault until it is resolved by hand, e.g.:"
-      log_error "  docker exec -it -u obsidian <container> git -C ${VAULT} status"
-      log_error "Keep the files Obsidian should have, finish or abort the operation,"
-      log_error "then restart the container."
+      log_error "Not touching the vault until it is resolved by hand: in the vault"
+      log_error "volume on the host, \`git status\` shows what is in progress. Keep the"
+      log_error "files Obsidian should have, finish or abort the operation, then start"
+      log_error "the container again."
       return 1
     fi
   done
