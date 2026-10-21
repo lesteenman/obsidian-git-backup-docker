@@ -598,8 +598,11 @@ log "Obsidian headless sync configured for vault: ${OBSIDIAN_GIT_VAULT_NAME}"
 # file types and config categories. This writes the values to the stored
 # config so the || [] fallback receives actual values.
 # ---------------------------------------------------------------------------
-SYNC_FILE_TYPES="${OBSIDIAN_GIT_SYNC_FILE_TYPES:-image,audio,video,pdf,unsupported}"
-SYNC_CONFIGS="${OBSIDIAN_GIT_SYNC_CONFIGS:-app,appearance,appearance-data,hotkey,core-plugin,core-plugin-data,community-plugin,community-plugin-data}"
+#
+# Unset means the default list; set but empty means none (ob's "empty to
+# clear"), e.g. OBSIDIAN_GIT_SYNC_CONFIGS= to stop syncing .obsidian.
+SYNC_FILE_TYPES="${OBSIDIAN_GIT_SYNC_FILE_TYPES-image,audio,video,pdf,unsupported}"
+SYNC_CONFIGS="${OBSIDIAN_GIT_SYNC_CONFIGS-app,appearance,appearance-data,hotkey,core-plugin,core-plugin-data,community-plugin,community-plugin-data}"
 
 # Normalize: strip whitespace around commas (users may write "image, audio")
 SYNC_FILE_TYPES="$(printf '%s' "${SYNC_FILE_TYPES}" | tr -d ' ')"
@@ -627,8 +630,8 @@ for _cat in $(printf '%s' "${SYNC_CONFIGS}" | tr ',' ' '); do
 done
 
 log "Configuring sync filter settings..."
-log "  File types: ${SYNC_FILE_TYPES}"
-log "  Configs:    ${SYNC_CONFIGS}"
+log "  File types: ${SYNC_FILE_TYPES:-(none)}"
+log "  Configs:    ${SYNC_CONFIGS:-(none)}"
 
 # Reset $@ for step 9 — must not inherit step 8's --vault/--password args
 set -- --path /vault
