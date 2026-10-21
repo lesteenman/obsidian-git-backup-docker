@@ -533,6 +533,16 @@ if "${FRESH_CLONE}"; then
     log "Set file times to the last commit ($(date -u -d "@${commit_time}" '+%Y-%m-%d %H:%M:%S UTC')),"
     log "  so newer edits already in Obsidian Sync win the initial sync"
   fi
+
+  # Sync state from an earlier vault volume describes files that are not
+  # here any more: ob would take every difference for a local edit, and
+  # every missing file (never committed, or ignored by git) for a local
+  # deletion, and upload both. Start with an initial sync instead.
+  for _state in "${XDG_CONFIG_HOME:-/config/xdg}"/obsidian-headless/sync/*/state.db*; do
+    [ -e "${_state}" ] || continue
+    log "Removing sync state from a previous vault: ${_state}"
+    rm -f "${_state}"
+  done
 fi
 
 # ---------------------------------------------------------------------------
