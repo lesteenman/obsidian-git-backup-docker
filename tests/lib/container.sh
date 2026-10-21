@@ -25,10 +25,15 @@ trap _cleanup EXIT
 on_vols() {
   # shellcheck disable=SC2086
   docker run --rm ${VOLS} --entrypoint sh \
-    -e GIT_CONFIG_GLOBAL=/dev/null -e GIT_CONFIG_NOSYSTEM=1 \
+    -e GIT_CONFIG_GLOBAL=/tmp/gitconfig -e GIT_CONFIG_NOSYSTEM=1 \
     -e GIT_AUTHOR_NAME=test -e GIT_AUTHOR_EMAIL=test@example.invalid \
     -e GIT_COMMITTER_NAME=test -e GIT_COMMITTER_EMAIL=test@example.invalid \
-    "${IMAGE}" -c "set -e; $1; chown -R 1000:1000 /remote /config /vault"
+    "${IMAGE}" -c "set -e
+      # The volumes belong to the container user; let root's git use them.
+      # (Env-based config is dropped for local transports, so use a file.)
+      printf '[safe]\\n\\tdirectory = *\\n' > /tmp/gitconfig
+      $1
+      chown -R 1000:1000 /remote /config /vault"
 }
 
 seed_remote() {
