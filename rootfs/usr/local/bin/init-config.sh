@@ -148,6 +148,8 @@ log "SSH configured (StrictHostKeyChecking=accept-new)"
 # ---------------------------------------------------------------------------
 RETRY_INTERVAL=30
 
+# Only ever called after a failed clone into a /vault that was verified to be
+# empty below, so everything here was created by git clone.
 clean_vault() {
   # Remove all files including dotfiles, except /vault itself
   rm -rf /vault/.git
@@ -160,6 +162,19 @@ if [ -d "/vault/.git" ]; then
   # Ensure remote is up to date
   run_as_user git -C /vault remote set-url origin "${OBSIDIAN_GIT_REMOTE_URL}" 2>/dev/null || true
 else
+  # Never clone over existing files: a failed clone attempt is cleaned up
+  # with clean_vault, which would delete them.
+  if [ -n "$(find /vault -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ]; then
+    log_error "/vault contains files but no git repository:"
+    find /vault -mindepth 1 -maxdepth 1 2>/dev/null | head -n 5 | while IFS= read -r _entry; do
+      log_error "  ${_entry}"
+    done
+    log_error "Refusing to clone into it, so nothing there is overwritten or deleted."
+    log_error "Move the files out and start again with an empty /vault: the vault is"
+    log_error "cloned from git, and Obsidian Sync downloads anything not in git."
+    exit 1
+  fi
+
   log "Cloning ${OBSIDIAN_GIT_REMOTE_URL} into /vault..."
 
   # Ensure /vault is writable by the obsidian user before cloning
