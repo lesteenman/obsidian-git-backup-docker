@@ -11,6 +11,9 @@ on_vols 'git -c init.defaultBranch=main init -q --bare /remote/vault.git
   echo old > "/tmp/seed/Sub folder/old note.md"
   git -C /tmp/seed add -A
   GIT_COMMITTER_DATE=@1577836800 git -C /tmp/seed commit -qm seed
+  echo later > /tmp/seed/later.md
+  git -C /tmp/seed add -A
+  GIT_COMMITTER_DATE=@1609459200 git -C /tmp/seed commit -qm later
   git -C /tmp/seed push -q origin HEAD:main'
 # Sync state left from an earlier vault volume.
 on_vols 'mkdir -p /config/xdg/obsidian-headless/sync/stub-vault
@@ -19,7 +22,8 @@ start_ctr
 
 mtime() { in_ctr "stat -c %Y \"/vault/$1\"" 2>/dev/null; }
 check "init completes" 'wait_for 60 "logs | grep -q \"Initialization complete\""'
-check "cloned file has the commit time" '[ "$(mtime "Sub folder/old note.md")" = 1577836800 ]'
+check "cloned file has the time of its own last commit" '[ "$(mtime "Sub folder/old note.md")" = 1577836800 ]'
+check "newer file has its newer commit time" '[ "$(mtime later.md)" = 1609459200 ]'
 check "stale sync state discarded" 'wait_for 30 "on_vols \"grep -q \\\"no state, initial sync\\\" /config/ob-calls.log\""'
 
 finish || { logs | tail -40; exit 1; }

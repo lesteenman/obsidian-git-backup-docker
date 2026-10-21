@@ -522,15 +522,22 @@ chown obsidian:obsidian "${GITIGNORE}"
 # Without sync state, ob resolves files that differ between /vault and the
 # server by modification time: the newer one wins, with no merge. git clone
 # stamps every file with the current time, so the git copy would beat every
-# newer edit already in Obsidian Sync. Give the files the time of the last
-# commit instead: edits made in Obsidian after it win, and git wins only
-# for files committed after the server's copy last changed.
+# newer edit already in Obsidian Sync. Give each file the time of the last
+# commit that changed it on this branch instead: an Obsidian edit made after
+# that wins, and git wins only where its change is the newer one.
+#
+# --first-parent with first-parent diffs attributes a change merged in from
+# elsewhere to the merge commit, i.e. when it arrived on this branch.
 # ---------------------------------------------------------------------------
 if "${FRESH_CLONE}"; then
-  commit_time="$(run_as_user git -C /vault log -1 --format=%ct 2>/dev/null || echo "")"
-  if [ -n "${commit_time}" ]; then
-    find /vault -path /vault/.git -prune -o -exec touch -c -d "@${commit_time}" {} +
-    log "Set file times to the last commit ($(date -u -d "@${commit_time}" '+%Y-%m-%d %H:%M:%S UTC')),"
+  if run_as_user git -C /vault rev-parse -q --verify HEAD >/dev/null 2>&1; then
+    run_as_user git -C /vault -c core.quotePath=false log --first-parent \
+        --diff-merges=first-parent --no-renames --format='@%ct' --name-only HEAD |
+      awk '/^@[0-9]+$/ { t = substr($0, 2); next } NF && !seen[$0]++ { print t "\t" $0 }' |
+      while IFS="$(printf '\t')" read -r _time _path; do
+        [ -e "/vault/${_path}" ] && touch -c -d "@${_time}" "/vault/${_path}"
+      done
+    log "Set each cloned file's modification time to its last commit,"
     log "  so newer edits already in Obsidian Sync win the initial sync"
   fi
 
