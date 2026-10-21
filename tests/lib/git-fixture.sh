@@ -57,5 +57,5 @@ in_sync() {
 }
 
 conflict_copy() {  # conflict_copy <glob prefix>, e.g. "note"
-  ls "${VAULT}" | grep -q "^$1 (GitHub conflict "
+  ls "${VAULT}" | grep -q "^$1 (git conflict "
 }

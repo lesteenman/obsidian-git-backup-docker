@@ -40,11 +40,13 @@ mark_unhealthy() { _write_health error "$*"; }
 #   - otherwise, for each file the remote changed since the merge base:
 #       unchanged locally                        -> take the remote version
 #       same content on both sides               -> nothing to do
-#       Markdown changed on both, no overlap     -> three-way merged result
+#       Markdown/.base changed on both, no overlap -> three-way merged result
 #       anything else changed on both sides      -> keep the local file, write
 #                                                   the remote version next to
-#                                                   it as "<name> (GitHub
-#                                                   conflict <stamp>).<ext>"
+#                                                   it as "<name> (git conflict
+#                                                   <date> <time> UTC).<ext>"
+#                                                   (under .obsidian/: no copy,
+#                                                   only logged)
 #       deleted remotely                         -> delete if unchanged
 #                                                   locally, else keep
 #       changed remotely, deleted locally        -> stays deleted, remote
@@ -79,9 +81,13 @@ _blob_on_disk() {
   fi
 }
 
-# _blob_at <rev> <path> — blob id of path at rev, or "" if absent
+# _blob_at <rev> <path> — blob id of path at rev, or "" if absent or a
+# folder there
 _blob_at() {
-  _vgit rev-parse -q --verify "$1:$2" 2>/dev/null || echo ""
+  _ba_id="$(_vgit rev-parse -q --verify "$1:$2" 2>/dev/null)" &&
+    [ "$(_vgit cat-file -t "${_ba_id}")" = blob ] &&
+    echo "${_ba_id}" ||
+    echo ""
 }
 
 # _place <file in INTEGRATE_TMP> <vault-relative destination>
@@ -92,19 +98,33 @@ _place() {
     printf '%s\n' "$2" >> "${VAULT}/${INTEGRATE_TMP}/placed"
 }
 
-# _conflict_name "dir/note.md" -> "dir/note (GitHub conflict 2026-10-21 0915).md"
+# _conflict_name "dir/note.md" -> "dir/note (git conflict 2026-10-21 0915 UTC).md"
+# Adds " 2", " 3", ... before the extension if that name is already taken.
 _conflict_name() {
   _cn_dir="$(dirname "$1")"
   _cn_file="$(basename "$1")"
   case "${_cn_file}" in
-    ?*.*) _cn_new="${_cn_file%.*} (GitHub conflict ${STAMP}).${_cn_file##*.}" ;;
-    *)    _cn_new="${_cn_file} (GitHub conflict ${STAMP})" ;;
+    ?*.*) _cn_stem="${_cn_file%.*}"; _cn_ext=".${_cn_file##*.}" ;;
+    *)    _cn_stem="${_cn_file}"; _cn_ext="" ;;
   esac
-  if [ "${_cn_dir}" = "." ]; then
-    printf '%s' "${_cn_new}"
-  else
-    printf '%s/%s' "${_cn_dir}" "${_cn_new}"
-  fi
+  _cn_prefix=""
+  [ "${_cn_dir}" = "." ] || _cn_prefix="${_cn_dir}/"
+  _cn_n=1
+  _cn_suffix=""
+  while :; do
+    _cn_new="${_cn_prefix}${_cn_stem} (git conflict ${STAMP}${_cn_suffix})${_cn_ext}"
+    [ -e "${VAULT}/${_cn_new}" ] || break
+    _cn_n=$((_cn_n + 1))
+    _cn_suffix=" ${_cn_n}"
+  done
+  printf '%s' "${_cn_new}"
+}
+
+# _unchanged_since <path> <blob> — the file on disk still has that content.
+# Checked right before overwriting or deleting, so a write ob sync made
+# since the first look is never lost (the window shrinks to the rename).
+_unchanged_since() {
+  [ "$(_blob_on_disk "$1")" = "$2" ] && [ ! -d "${VAULT}/$1" ]
 }
 
 # _integrate_file <status> <path> — apply one remote change (see above).
@@ -116,42 +136,60 @@ _integrate_file() {
   _remote_blob="$(_blob_at "${remote}" "${_p}")"
   _local_blob="$(_blob_on_disk "${_p}")"
 
-  [ "${_local_blob}" = "${_remote_blob}" ] && return 0   # already identical
+  if [ ! -d "${VAULT}/${_p}" ]; then
+    [ "${_local_blob}" = "${_remote_blob}" ] && return 0   # already identical
 
-  if [ "${_local_blob}" = "${_base_blob}" ]; then
-    # Unchanged locally: take the remote side as is.
+    if [ "${_local_blob}" = "${_base_blob}" ]; then
+      # Unchanged locally: take the remote side as is.
+      if [ "${_st}" = D ]; then
+        _unchanged_since "${_p}" "${_local_blob}" && rm -f "${VAULT}/${_p}"
+        return 0
+      fi
+      _vgit cat-file --filters "${remote}:${_p}" > "${VAULT}/${INTEGRATE_TMP}/file" || return 1
+      if _unchanged_since "${_p}" "${_local_blob}"; then
+        _place file "${_p}"
+        return
+      fi
+      _local_blob="$(_blob_on_disk "${_p}")"   # ob wrote it meanwhile
+    fi
+
+    # Changed on both sides.
     if [ "${_st}" = D ]; then
-      rm -f "${VAULT}/${_p}"
+      log "Kept ${_p}: deleted in git (origin/${BRANCH}), changed in Obsidian"
       return 0
     fi
-    _vgit cat-file --filters "${remote}:${_p}" > "${VAULT}/${INTEGRATE_TMP}/file" &&
-      _place file "${_p}"
-    return
+
+    case "${_p}" in
+      *.[mM][dD]|*.base)
+        if [ -n "${_local_blob}" ]; then
+          if [ -n "${_base_blob}" ]; then
+            _vgit cat-file --filters "${base}:${_p}" > "${VAULT}/${INTEGRATE_TMP}/base" || return 1
+          else
+            : > "${VAULT}/${INTEGRATE_TMP}/base"
+          fi
+          _vgit cat-file --filters "${remote}:${_p}" > "${VAULT}/${INTEGRATE_TMP}/theirs" || return 1
+          cp "${VAULT}/${_p}" "${VAULT}/${INTEGRATE_TMP}/ours" || return 1
+          if git merge-file -q "${VAULT}/${INTEGRATE_TMP}/ours" \
+               "${VAULT}/${INTEGRATE_TMP}/base" "${VAULT}/${INTEGRATE_TMP}/theirs" &&
+             _unchanged_since "${_p}" "${_local_blob}"; then
+            _place ours "${_p}" || return 1
+            log "Merged ${_p} (changed on both sides, no overlapping lines)"
+            return 0
+          fi
+        fi
+        ;;
+    esac
   fi
 
-  # Changed on both sides.
-  if [ "${_st}" = D ]; then
-    log "Kept ${_p}: deleted on GitHub, changed in Obsidian"
-    return 0
-  fi
-
+  # Obsidian reads every file in .obsidian/ as settings, and ob syncs
+  # unknown JSON there to all devices: no copy, the git version stays in
+  # history.
   case "${_p}" in
-    *.md)
-      if [ -n "${_local_blob}" ]; then
-        if [ -n "${_base_blob}" ]; then
-          _vgit cat-file blob "${_base_blob}" > "${VAULT}/${INTEGRATE_TMP}/base" || return 1
-        else
-          : > "${VAULT}/${INTEGRATE_TMP}/base"
-        fi
-        _vgit cat-file blob "${_remote_blob}" > "${VAULT}/${INTEGRATE_TMP}/theirs" || return 1
-        cp "${VAULT}/${_p}" "${VAULT}/${INTEGRATE_TMP}/ours" || return 1
-        if git merge-file -q "${VAULT}/${INTEGRATE_TMP}/ours" \
-             "${VAULT}/${INTEGRATE_TMP}/base" "${VAULT}/${INTEGRATE_TMP}/theirs"; then
-          _place ours "${_p}" || return 1
-          log "Merged ${_p} (changed on both sides, no overlapping lines)"
-          return 0
-        fi
-      fi
+    .obsidian/*)
+      conflicts=$((conflicts + 1))
+      log_error "CONFLICT: ${_p} changed in Obsidian and in git (origin/${BRANCH})."
+      log_error "Kept the Obsidian version. The git version: git show ${remote}:'${_p}'"
+      return 0
       ;;
   esac
 
@@ -159,8 +197,9 @@ _integrate_file() {
   _vgit cat-file --filters "${remote}:${_p}" > "${VAULT}/${INTEGRATE_TMP}/file" &&
     _place file "${_copy}" || return 1
   conflicts=$((conflicts + 1))
-  log_error "CONFLICT: ${_p} changed in Obsidian and on GitHub. Kept the Obsidian version;"
-  log_error "the GitHub version is saved as '${_copy}'. Merge by hand and delete the copy."
+  log_error "CONFLICT: ${_p} changed in Obsidian and in git (origin/${BRANCH})."
+  log_error "Kept the Obsidian version; the git version is saved as '${_copy}'."
+  log_error "Merge by hand and delete the copy."
 }
 
 do_pull() {
@@ -208,7 +247,7 @@ do_pull() {
   fi
 
   base="$(_vgit merge-base HEAD "${remote}" 2>/dev/null || echo "${EMPTY_TREE}")"
-  STAMP="$(date -u '+%Y-%m-%d %H%M')"
+  STAMP="$(date -u '+%Y-%m-%d %H%M') UTC"
   conflicts=0
   rm -rf "${VAULT:?}/${INTEGRATE_TMP}"
   mkdir -p "${VAULT}/${INTEGRATE_TMP}"
@@ -220,23 +259,28 @@ do_pull() {
   if grep -q "$(printf '\t')\"" "${VAULT}/${INTEGRATE_TMP}/changes"; then
     log_error "Remote changes include a path with special characters git quotes:"
     log_error "$(grep "$(printf '\t')\"" "${VAULT}/${INTEGRATE_TMP}/changes" | head -n 3)"
-    log_error "Not integrating origin/${BRANCH}. Rename the file on GitHub."
+    log_error "Not integrating origin/${BRANCH}. Rename the file in git."
     return 1
   fi
 
-  failed=false
+  # Deletions first, removing folders they leave empty, so a file the
+  # remote put where a folder used to be can take its place.
+  grep "^D$(printf '\t')" "${VAULT}/${INTEGRATE_TMP}/changes" > "${VAULT}/${INTEGRATE_TMP}/ordered"
+  grep -v "^D$(printf '\t')" "${VAULT}/${INTEGRATE_TMP}/changes" >> "${VAULT}/${INTEGRATE_TMP}/ordered"
   while IFS="$(printf '\t')" read -r status path; do
-    _integrate_file "${status}" "${path}" || {
-      log_error "Could not write ${path}"
-      failed=true
-    }
-  done < "${VAULT}/${INTEGRATE_TMP}/changes"
-
-  if "${failed}"; then
-    rm -rf "${VAULT:?}/${INTEGRATE_TMP}"
-    log_error "Integration of origin/${BRANCH} incomplete (will retry next cycle)"
-    return 1
-  fi
+    if ! _integrate_file "${status}" "${path}"; then
+      # Recording the merge anyway keeps backups flowing; retrying would
+      # block every later pull and push on this one path.
+      conflicts=$((conflicts + 1))
+      log_error "CONFLICT: could not apply the git change to ${path}."
+      log_error "Kept the vault as it is. The git version: git show ${remote}:'${path}'"
+    elif [ "${status}" = D ]; then
+      _dir="$(dirname "${path}")"
+      while [ "${_dir}" != "." ] && rmdir "${VAULT}/${_dir}" 2>/dev/null; do
+        _dir="$(dirname "${_dir}")"
+      done
+    fi
+  done < "${VAULT}/${INTEGRATE_TMP}/ordered"
 
   # `add -A` skips files the vault's .gitignore matches. Force-add what was
   # written here, or the merge commit would delete those files on the remote.

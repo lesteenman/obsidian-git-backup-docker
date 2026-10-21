@@ -17,7 +17,7 @@ claude_commit "sed -i 's/line2/line2 CLAUDE/' note.md"
 sed -i 's/line2/line2 OBSIDIAN/' "${VAULT}/note.md"
 cycle
 check "Obsidian version kept in note.md" 'grep -q OBSIDIAN "${VAULT}/note.md"'
-check "GitHub version kept as conflict copy" 'cat "${VAULT}"/note\ \(GitHub\ conflict\ *.md 2>/dev/null | grep -q CLAUDE'
+check "GitHub version kept as conflict copy" 'cat "${VAULT}"/note\ \(git\ conflict\ *.md 2>/dev/null | grep -q CLAUDE'
 check "no conflict markers" no_markers
 check "in sync" in_sync
 check "conflict logged as error" 'grep -q "ERROR: CONFLICT: note.md" "${LOG}"'
@@ -56,7 +56,7 @@ claude_commit "printf BIN-CLAUDE > img.png"
 printf BIN-OBSIDIAN > "${VAULT}/img.png"
 cycle
 check "Obsidian binary kept" 'grep -q OBSIDIAN "${VAULT}/img.png"'
-check "GitHub binary kept as conflict copy" 'cat "${VAULT}"/img\ \(GitHub\ conflict\ *.png 2>/dev/null | grep -q CLAUDE'
+check "GitHub binary kept as conflict copy" 'cat "${VAULT}"/img\ \(git\ conflict\ *.png 2>/dev/null | grep -q CLAUDE'
 check "in sync" in_sync
 
 echo "same change made on both sides"
@@ -84,7 +84,7 @@ claude_commit "echo claude >> other.md"
 echo "ob write" >> "${VAULT}/other.md"
 do_pull >> "${LOG}" 2>&1
 check "ob write kept" 'grep -q "ob write" "${VAULT}/other.md"'
-check "GitHub change kept as conflict copy" 'cat "${VAULT}"/other\ \(GitHub\ conflict\ *.md 2>/dev/null | grep -q claude'
+check "GitHub change kept as conflict copy" 'cat "${VAULT}"/other\ \(git\ conflict\ *.md 2>/dev/null | grep -q claude'
 check "no conflict markers" no_markers
 
 echo "interrupted integration (files written, no merge commit) converges"
@@ -106,7 +106,7 @@ claude_commit "printf 'a CLAUDE\n' > 'Daily notes/2026 10 21.md'"
 printf 'a OBSIDIAN\n' > "${VAULT}/Daily notes/2026 10 21.md"
 cycle
 check "Obsidian version kept" 'grep -q OBSIDIAN "${VAULT}/Daily notes/2026 10 21.md"'
-check "GitHub version kept as conflict copy next to it" 'cat "${VAULT}/Daily notes"/2026\ 10\ 21\ \(GitHub\ conflict\ *.md 2>/dev/null | grep -q CLAUDE'
+check "GitHub version kept as conflict copy next to it" 'cat "${VAULT}/Daily notes"/2026\ 10\ 21\ \(git\ conflict\ *.md 2>/dev/null | grep -q CLAUDE'
 check "in sync" in_sync
 
 echo "unrelated histories (remote re-initialized separately)"
@@ -139,7 +139,7 @@ claude_commit "printf PNG-CLAUDE2 > img.png"
 printf PNG-OBSIDIAN > "${VAULT}/img.png"
 cycle
 check "local LFS file kept" 'grep -q PNG-OBSIDIAN "${VAULT}/img.png"'
-check "LFS conflict copy has content" 'cat "${VAULT}"/img\ \(GitHub\ conflict\ *.png 2>/dev/null | grep -q PNG-CLAUDE2'
+check "LFS conflict copy has content" 'cat "${VAULT}"/img\ \(git\ conflict\ *.png 2>/dev/null | grep -q PNG-CLAUDE2'
 check "in sync" in_sync
 
 finish
