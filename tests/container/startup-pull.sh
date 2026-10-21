@@ -5,7 +5,7 @@
 
 seed_remote
 start_ctr -e OBSIDIAN_GIT_PULL_INTERVAL=3600
-check "watcher started" 'wait_for 60 "logs | grep -q \"Watching for changes\""'
+check "watcher started" 'wait_for 60 "logs | grep -q \"Watches established\""'
 docker stop -t 30 "${CTR}" >/dev/null
 
 on_vols 'rm -f /config/health

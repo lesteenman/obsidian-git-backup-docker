@@ -10,7 +10,7 @@ seed_remote
 on_vols 'printf "#!/bin/sh\nsleep 8\n" > /remote/vault.git/hooks/pre-receive
   chmod +x /remote/vault.git/hooks/pre-receive'
 start_ctr -e OBSIDIAN_GIT_DEBOUNCE_SECS=60
-check "watcher started" 'wait_for 60 "logs | grep -q \"Watching for changes\""'
+check "watcher started" 'wait_for 60 "logs | grep -q \"Watches established\""'
 
 in_ctr 'echo "written just before stop" > /vault/last.md'
 sleep 2

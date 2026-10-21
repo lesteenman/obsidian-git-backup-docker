@@ -7,7 +7,7 @@ health() { docker inspect -f '{{.State.Health.Status}}' "${CTR}" 2>/dev/null; }
 seed_remote
 start_ctr --health-interval=2s --health-retries=1 --health-start-period=0s
 
-check "watcher started" 'wait_for 60 "logs | grep -q \"Watching for changes\""'
+check "watcher started" 'wait_for 60 "logs | grep -q \"Watches established\""'
 in_ctr 'echo one > /vault/one.md'
 check "healthy after a successful push" 'wait_for 30 "[ \"\$(health)\" = healthy ]"'
 
