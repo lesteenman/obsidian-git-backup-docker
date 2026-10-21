@@ -29,4 +29,11 @@ do_periodic_pull >> "${LOG}" 2>&1
 check "both on remote" 'g -C "${W}/remote.git" show main:late.md >/dev/null 2>&1 && [ -f "${VAULT}/gh.md" ]'
 check "in sync" in_sync
 
+echo "unreachable remote before the branch was verified is a pull failure"
+new_fixture
+g -C "${VAULT}" remote set-url origin "${W}/missing.git"
+do_periodic_pull >> "${LOG}" 2>&1
+check "pull failure reported" 'grep -q "Periodic pull failed" "${LOG}"'
+check "not mistaken for a missing branch" '! grep -q "does not exist yet" "${LOG}"'
+
 finish

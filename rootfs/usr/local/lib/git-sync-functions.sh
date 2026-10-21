@@ -209,13 +209,19 @@ do_pull() {
   #
   # We cache the result after the first successful push to avoid a network
   # round-trip (ls-remote) on every commit cycle.
+  # ls-remote --exit-code returns 2 only when the branch is missing; any
+  # other failure (unreachable remote, auth) is a pull failure.
   if ! "${remote_branch_verified}"; then
-    if git -C "${VAULT}" ls-remote --exit-code --heads origin "${BRANCH}" >/dev/null 2>&1; then
-      remote_branch_verified=true
-    else
-      log "Remote branch origin/${BRANCH} does not exist yet — skipping pull"
-      return 0
-    fi
+    _rc=0
+    ls_output="$(git -C "${VAULT}" ls-remote --exit-code --heads origin "${BRANCH}" 2>&1)" || _rc=$?
+    case "${_rc}" in
+      0) remote_branch_verified=true ;;
+      2) log "Remote branch origin/${BRANCH} does not exist yet — skipping pull"
+         return 0 ;;
+      *) log_error "git ls-remote failed: ${ls_output}"
+         log_error "Local commits are safe. Pull will be retried on the next cycle."
+         return 1 ;;
+    esac
   fi
 
   if ! fetch_output="$(_vgit fetch --quiet origin "${BRANCH}" 2>&1)"; then
