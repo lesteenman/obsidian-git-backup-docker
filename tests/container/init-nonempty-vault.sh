@@ -16,4 +16,9 @@ check "nothing cloned over it" 'on_vols "[ ! -e /vault/.git ] && [ ! -e /vault/n
 check "reason logged" 'logs | grep -q "ERROR: /vault contains files but no git repository"'
 check "ob sync never started" '! on_vols "grep -q \"ob sync \" /config/ob-calls.log 2>/dev/null"'
 
+docker rm -f "${CTR}" >/dev/null
+on_vols 'rm -rf /vault/* /vault/.obsidian && mkdir /vault/lost+found'
+start_ctr
+check "empty lost+found alone does not block the clone" 'wait_for 60 "in_ctr \"[ -f /vault/note.md ]\" 2>/dev/null"'
+
 finish || { logs | tail -40; exit 1; }

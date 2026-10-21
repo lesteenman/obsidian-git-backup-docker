@@ -173,6 +173,9 @@ if [ -d "/vault/.git" ]; then
 else
   # Never clone over existing files: a failed clone attempt is cleaned up
   # with clean_vault, which would delete them.
+  # An empty lost+found (from mkfs, when /vault is the root of a filesystem)
+  # would make git clone fail too; fsck recreates it when needed.
+  rmdir /vault/lost+found 2>/dev/null || true
   if [ -n "$(find /vault -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ]; then
     log_error "/vault contains files but no git repository:"
     find /vault -mindepth 1 -maxdepth 1 2>/dev/null | head -n 5 | while IFS= read -r _entry; do
