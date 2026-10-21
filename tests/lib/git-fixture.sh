@@ -32,6 +32,7 @@ new_fixture() {
   push_failures=0
   remote_branch_verified=false
   LOG="${W}/watcher.log"
+  HEALTH_FILE="${W}/health"
 }
 
 # claude_commit <shell command run in claude/> — commit and push it to remote

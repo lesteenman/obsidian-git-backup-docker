@@ -25,6 +25,7 @@ LOG_TAG="git-watcher"
 DEBOUNCE="${OBSIDIAN_GIT_DEBOUNCE_SECS:-30}"
 PULL_INTERVAL="${OBSIDIAN_GIT_PULL_INTERVAL:-3600}"
 VAULT="/vault"
+HEALTH_FILE="/config/health"
 BRANCH="${OBSIDIAN_GIT_BRANCH:-main}"
 
 # ---------------------------------------------------------------------------
@@ -119,6 +120,7 @@ while [ ! -d "${VAULT}/.git" ]; do
 done
 
 if ! check_repo_state; then
+  mark_unhealthy "interrupted git operation in ${VAULT}"
   # Stay up instead of exiting: s6 would restart the watcher in a loop.
   exec sleep infinity
 fi

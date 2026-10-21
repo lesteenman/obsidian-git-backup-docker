@@ -9,7 +9,23 @@
 #   BRANCH                  branch to pull from and push to
 #   push_failures           consecutive push failure counter (start at 0)
 #   remote_branch_verified  "true"/"false" — remote branch known to exist
+#   HEALTH_FILE             status file read by healthcheck.sh
 # =============================================================================
+
+# ---------------------------------------------------------------------------
+# Health status for the Docker HEALTHCHECK (healthcheck.sh)
+#
+# One line: "ok <epoch>" after a successful pull or push, or
+# "error <epoch> <reason>" after a failure. Written via rename so the
+# healthcheck never reads a partial line.
+# ---------------------------------------------------------------------------
+_write_health() {
+  printf '%s %s %s\n' "$1" "$(date +%s)" "$2" > "${HEALTH_FILE}.tmp" &&
+    mv -f "${HEALTH_FILE}.tmp" "${HEALTH_FILE}" ||
+    log_error "Could not write health status to ${HEALTH_FILE}"
+}
+mark_healthy()   { _write_health ok ""; }
+mark_unhealthy() { _write_health error "$*"; }
 
 # ---------------------------------------------------------------------------
 # Pull from remote — integrate origin/BRANCH without stopping mid-way
@@ -242,6 +258,7 @@ do_commit_and_push() {
   # (e.g. a stale index.lock) must not look like "No changes to commit".
   if ! add_output="$(git -C "${VAULT}" add -A 2>&1)"; then
     log_error "git add failed: ${add_output}"
+    mark_unhealthy "git add failed"
     return 1
   fi
 
@@ -258,6 +275,7 @@ do_commit_and_push() {
     log "Committed: ${COMMIT_MSG}"
   else
     log_error "git commit failed"
+    mark_unhealthy "git commit failed"
     return 1
   fi
 
@@ -270,6 +288,7 @@ do_commit_and_push() {
     log "Pushed to origin/${BRANCH}"
     push_failures=0
     remote_branch_verified=true
+    mark_healthy
     return 0
   }
 
@@ -277,7 +296,8 @@ do_commit_and_push() {
   push_failures=$((push_failures + 1))
   log_error "git push failed (${push_failures} consecutive failure(s)):"
   log_error "${push_output}"
-  log_error "Your commit is saved locally. Push will be retried on the next file change."
+  log_error "Your commit is saved locally. Push will be retried on the next change or periodic pull."
+  mark_unhealthy "push failed ${push_failures} time(s)"
 
   if [ "${push_failures}" -ge 5 ]; then
     log_error "WARNING: ${push_failures} consecutive push failures. Backup is NOT reaching the remote."
@@ -291,22 +311,30 @@ do_commit_and_push() {
 # Periodic pull — run when no local file events arrived for PULL_INTERVAL
 # ---------------------------------------------------------------------------
 do_periodic_pull() {
-  if do_pull; then
-    # Push whenever local is ahead: a merge commit from do_pull, or an
-    # earlier commit whose push failed or was cut off at shutdown.
-    if ! "${remote_branch_verified}" ||
-       [ -n "$(git -C "${VAULT}" rev-list -n 1 "origin/${BRANCH}..HEAD" 2>/dev/null)" ]; then
-      log "Local commits not on origin/${BRANCH} yet. Pushing..."
-      push_output="$(git -C "${VAULT}" push -u origin "${BRANCH}" 2>&1)" && {
-        log "Pushed to origin/${BRANCH}"
-        push_failures=0
-        remote_branch_verified=true
-      } || {
-        log_error "Push after periodic pull failed: ${push_output}"
-      }
-    fi
-  else
+  if ! do_pull; then
     log_error "Periodic pull failed (will retry next interval)"
+    mark_unhealthy "pull failed"
+    return 1
+  fi
+
+  # Push whenever local is ahead: a merge commit from do_pull, or an
+  # earlier commit whose push failed or was cut off at shutdown.
+  if "${remote_branch_verified}" &&
+     [ -z "$(git -C "${VAULT}" rev-list -n 1 "origin/${BRANCH}..HEAD" 2>/dev/null)" ]; then
+    mark_healthy
+    return 0
+  fi
+
+  log "Local commits not on origin/${BRANCH} yet. Pushing..."
+  if push_output="$(git -C "${VAULT}" push -u origin "${BRANCH}" 2>&1)"; then
+    log "Pushed to origin/${BRANCH}"
+    push_failures=0
+    remote_branch_verified=true
+    mark_healthy
+  else
+    log_error "Push after periodic pull failed: ${push_output}"
+    mark_unhealthy "push failed"
+    return 1
   fi
 }
 

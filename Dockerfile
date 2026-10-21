@@ -186,5 +186,10 @@ VOLUME ["/config", "/vault"]
 
 # No ports exposed — this container has no web interface or API
 
+# Unhealthy when the git watcher's last pull or push failed, or none has
+# succeeded for 3 pull intervals. See rootfs/usr/local/bin/healthcheck.sh.
+HEALTHCHECK --interval=5m --timeout=10s --start-period=10m \
+  CMD ["/usr/local/bin/healthcheck.sh"]
+
 # s6-overlay as PID 1
 ENTRYPOINT ["/init"]
