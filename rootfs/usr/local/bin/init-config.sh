@@ -157,6 +157,7 @@ clean_vault() {
   find /vault -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
 }
 
+FRESH_CLONE=false
 if [ -d "/vault/.git" ]; then
   log "Git repository already exists at /vault"
 
@@ -192,6 +193,7 @@ else
     # Try with the configured branch first
     if run_as_user env GIT_SSH_COMMAND="${GIT_SSH_COMMAND}" git clone --branch "${OBSIDIAN_GIT_BRANCH}" "${OBSIDIAN_GIT_REMOTE_URL}" /vault 2>&1; then
       log "Git clone successful (branch: ${OBSIDIAN_GIT_BRANCH})"
+      FRESH_CLONE=true
       break
     fi
 
@@ -201,6 +203,7 @@ else
     # Branch might not exist yet on a new/empty repo — try default branch
     if run_as_user env GIT_SSH_COMMAND="${GIT_SSH_COMMAND}" git clone "${OBSIDIAN_GIT_REMOTE_URL}" /vault 2>&1; then
       log "Git clone successful (default branch). Will create '${OBSIDIAN_GIT_BRANCH}' branch."
+      FRESH_CLONE=true
       break
     fi
 
@@ -512,6 +515,25 @@ fi
 
 # Ensure .gitignore is owned by the obsidian user
 chown obsidian:obsidian "${GITIGNORE}"
+
+# ---------------------------------------------------------------------------
+# 7b. Prepare a fresh clone for obsidian-headless's initial sync
+#
+# Without sync state, ob resolves files that differ between /vault and the
+# server by modification time: the newer one wins, with no merge. git clone
+# stamps every file with the current time, so the git copy would beat every
+# newer edit already in Obsidian Sync. Give the files the time of the last
+# commit instead: edits made in Obsidian after it win, and git wins only
+# for files committed after the server's copy last changed.
+# ---------------------------------------------------------------------------
+if "${FRESH_CLONE}"; then
+  commit_time="$(run_as_user git -C /vault log -1 --format=%ct 2>/dev/null || echo "")"
+  if [ -n "${commit_time}" ]; then
+    find /vault -path /vault/.git -prune -o -exec touch -c -d "@${commit_time}" {} +
+    log "Set file times to the last commit ($(date -u -d "@${commit_time}" '+%Y-%m-%d %H:%M:%S UTC')),"
+    log "  so newer edits already in Obsidian Sync win the initial sync"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 8. Obsidian headless setup
