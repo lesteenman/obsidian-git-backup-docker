@@ -287,16 +287,16 @@ do_commit_and_push() {
 # Periodic pull — run when no local file events arrived for PULL_INTERVAL
 # ---------------------------------------------------------------------------
 do_periodic_pull() {
-  head_before="$(git -C "${VAULT}" rev-parse HEAD 2>/dev/null || echo "")"
   if do_pull; then
-    # If pull created new commits (e.g., a merge commit), push them so the
-    # remote stays in sync.
-    head_after="$(git -C "${VAULT}" rev-parse HEAD 2>/dev/null || echo "")"
-    if [ "${head_before}" != "${head_after}" ] && [ -n "${head_after}" ]; then
-      log "Pull created new commits. Pushing to origin/${BRANCH}..."
+    # Push whenever local is ahead: a merge commit from do_pull, or an
+    # earlier commit whose push failed or was cut off at shutdown.
+    if ! "${remote_branch_verified}" ||
+       [ -n "$(git -C "${VAULT}" rev-list -n 1 "origin/${BRANCH}..HEAD" 2>/dev/null)" ]; then
+      log "Local commits not on origin/${BRANCH} yet. Pushing..."
       push_output="$(git -C "${VAULT}" push -u origin "${BRANCH}" 2>&1)" && {
         log "Pushed to origin/${BRANCH}"
         push_failures=0
+        remote_branch_verified=true
       } || {
         log_error "Push after periodic pull failed: ${push_output}"
       }
