@@ -33,9 +33,10 @@ committed, or ignored by git) for a local deletion, and upload both.
   volume. `docker-compose.yml` now marks `/vault` as required, so the two
   persist together.
 - After a **fresh clone**, init-config:
-  - sets every cloned file's modification time to the last commit's time,
-    so edits made in Obsidian after that commit win the initial sync and
-    git wins only where it is newer;
+  - sets each cloned file's modification time to the last first-parent
+    commit that changed it, so edits made in Obsidian after that commit win
+    the initial sync and git wins only where its change is newer (ties go
+    to the local file);
   - removes any `state.db` left in `/config/xdg`, so ob starts with an
     initial sync, which never pushes deletions.
 - init-config refuses to clone into a `/vault` that already contains files.
@@ -47,10 +48,12 @@ committed, or ignored by git) for a local deletion, and upload both.
   syncing instead of re-running an initial sync.
 - On upgrade from an older image, the first start has no saved state yet
   and runs one initial sync, as every start did before.
-- The modification time is an approximation: it is the time of the last
-  commit, not of each file's last change. A file changed in Obsidian
-  before that commit but not yet committed (inside the debounce window)
-  can still lose to the git copy.
+- The modification time is the commit time, not the moment of the edit:
+  a change still inside the debounce window when the commit was made can
+  lose to the git copy by a few seconds.
+- The initial sync still does not sync deletions: notes deleted on one side
+  but present on the other come back. Removing stale state is the lesser
+  evil, because stale state would push deletions instead.
 - Bringing an existing vault folder into a new container is no longer
   possible by mounting it as `/vault`. Start empty and let git and Obsidian
   Sync fill it.

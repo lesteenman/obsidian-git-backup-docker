@@ -56,14 +56,25 @@ Options considered:
   as a local change) with the base and remote versions:
   - unchanged locally: take the remote version, or delete;
   - same content on both sides: nothing to do;
-  - Markdown changed on both sides: `git merge-file`; if the changes do
-    not overlap, write the merged result;
+  - Markdown or `.base` changed on both sides: `git merge-file`; if the
+    changes do not overlap, write the merged result;
   - anything else changed on both sides: keep the local file and write the
-    remote version next to it as `<name> (GitHub conflict <date>
-    <time>).<ext>`, logged as `ERROR: CONFLICT:`;
+    remote version next to it as `<name> (git conflict <date> <time>
+    UTC).<ext>` (with " 2", " 3"… if taken), logged as `ERROR: CONFLICT:`;
+  - under `.obsidian/`: keep the local file and only log, because Obsidian
+    and ob treat every file there as settings;
   - deleted remotely, changed locally: keep the local file;
+  - a change that cannot be applied (for example a file where the vault
+    has a folder with local files): logged as a conflict with the `git show`
+    command to retrieve it;
 - records a merge commit (parents HEAD and the remote) with
-  `commit-tree`/`update-ref`.
+  `commit-tree`/`update-ref`, force-adding the files it wrote so paths the
+  vault's `.gitignore` matches are not deleted on the remote.
+
+Deletions are applied first, and folders they empty are removed, so a file
+can replace a folder. Each file is checked again right before it is
+overwritten or deleted; if ob changed it since, it is treated as changed on
+both sides. The remaining window is the rename itself.
 
 Files are produced in `.git/ogb-integrate/` and renamed into place, so ob
 never reads a half-written file. Remote content goes through git's filters
@@ -97,6 +108,11 @@ and init-config stops the container before ob sync starts.
   version was the one you wanted, you have to copy it over by hand.
 - History is non-linear: every integration with local commits is a merge
   commit.
-- Only Markdown is merged line by line. Canvas and JSON files changed on
-  both sides always produce a conflict copy, because a textual merge could
-  produce invalid JSON.
+- Only Markdown and `.base` are merged line by line. Canvas and JSON files
+  changed on both sides always produce a conflict copy, because a textual
+  merge could produce invalid JSON.
+- A change that cannot be applied is recorded as merged, so it only
+  survives in git history and the log. Retrying instead would block every
+  later pull and push.
+- Conflict copies are indexed by Obsidian; plugins such as Dataview list
+  their content twice until they are cleaned up.
