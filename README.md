@@ -258,6 +258,12 @@ the `OBSIDIAN_GIT_` prefix because it's not a variable defined by this project.
 | `/config` | **Yes** | Persistent configuration and SSH keys. Must survive restarts. Named volume (default) or bind mount (see [Option B](#option-b-bring-your-own-ssh-key-bind-mount)). |
 | `/vault` | **Yes** | Vault data and git working tree. Must persist together with `/config`, which holds obsidian-headless's sync state for these files. Must be empty (or contain this container's git clone) on start: the container refuses to clone over existing files. |
 
+> **Upgrading from an earlier version:** if `/vault` pointed at an existing
+> vault folder that is not this container's git clone, the container now
+> stops with "/vault contains files but no git repository". Point `/vault` at
+> a new, empty folder or volume: the vault is cloned from git, and Obsidian
+> Sync downloads the rest.
+
 ## User / Group Identifiers (PUID/PGID)
 
 When using **bind mounts** (mapping a host directory into the container), you
@@ -333,25 +339,41 @@ behind. It applies the remote changes file by file instead:
 | Situation | Result |
 |---|---|
 | File changed in git only | Git version written to the vault |
-| Markdown note changed on both sides, different lines | Both changes merged |
-| File changed on both sides, overlapping (or not Markdown) | Vault version kept; git version saved next to it as `<name> (GitHub conflict <date> <time>).<ext>` |
+| Markdown (or `.base`) changed on both sides, different lines | Both changes merged |
+| File changed on both sides, overlapping (or not Markdown) | Vault version kept; git version saved next to it as `<name> (git conflict <date> <time> UTC).<ext>` |
+| Settings under `.obsidian/` changed on both sides | Vault version kept; no copy (Obsidian would read it as settings). The log shows the `git show` command to get the git version |
 | Deleted in git, unchanged in the vault | Deleted |
 | Deleted in git, changed in the vault | Vault version kept |
 | Changed in git, deleted in the vault | Stays deleted; git version saved as a conflict copy |
 
-Conflict copies appear in Obsidian like any other note. Merge them by hand
-and delete the copy. Each conflict is also logged as an `ERROR: CONFLICT:`
-line.
+Conflict copies appear in Obsidian like any other note, so until you clean
+them up, plugins such as Dataview or Tasks list their contents twice. Merge
+them by hand and delete the copy. Each conflict is also logged as an
+`ERROR: CONFLICT:` line. Conflicts do not make the container unhealthy.
+
+`OBSIDIAN_GIT_SYNC_CONFLICT_STRATEGY` is a different thing: it controls what
+obsidian-headless does when the vault and **another Obsidian device** changed
+the same note. Conflicts between the vault and git always produce
+`(git conflict …)` copies. With `OBSIDIAN_GIT_SYNC_CONFLICT_STRATEGY=conflict`,
+obsidian-headless's own `(Conflicted copy …)` files are committed to git like
+any other file.
 
 On a **first start** (fresh clone), obsidian-headless has no sync state and
-resolves differences between the clone and Obsidian Sync by modification
-time. The container gives cloned files the time of the last commit, so edits
-made in Obsidian after that commit win.
+runs an *initial sync*:
+
+- Files that differ between the clone and Obsidian Sync are resolved by
+  modification time, newer wins, no merge. The container gives each cloned
+  file the time of the last commit that changed it, so edits made in
+  Obsidian after that commit win. `OBSIDIAN_GIT_SYNC_CONFLICT_STRATEGY` does
+  not apply here.
+- Deletions are not synced: a note deleted on another device but still in
+  git comes back, and so does a note deleted in git but still in Obsidian
+  Sync. Check for such notes after the first start.
 
 If a previous version of this image was killed in the middle of a `git
 rebase` or `git merge`, the container now stops at start with an error
-instead of touching the vault. Resolve it in the vault volume on the host
-(`git status` shows what is in progress), then start the container again.
+instead of touching the vault. The log shows how to open a shell on the
+vault volume to resolve it.
 
 > **Security:** anyone who can push to the git remote can change your vault
 > on every device. With the default `OBSIDIAN_GIT_SYNC_CONFIGS`, that
@@ -364,10 +386,10 @@ instead of touching the vault. Resolve it in the vault volume on the host
 The image has a Docker `HEALTHCHECK`. The container is **unhealthy** when
 the watcher's last commit, pull or push failed, or when none succeeded for
 three pull intervals (no age limit with `OBSIDIAN_GIT_PULL_INTERVAL=0`).
-The reason is shown by:
+Check the status and the output of the last few checks (oldest first):
 
 ```sh
-docker inspect --format '{{json .State.Health}}' obsidian-git-backup
+docker inspect --format '{{.State.Health.Status}}{{range .State.Health.Log}}{{println}}{{.End}} {{.Output}}{{end}}' obsidian-git-backup
 ```
 
 The status comes from `/config/health`, written by the watcher after every
@@ -429,6 +451,11 @@ OBSIDIAN_GIT_SYNC_FILE_TYPES=image,audio,video,pdf
 ```
 
 ### Config categories
+
+> **Security:** with the default list, community plugin code
+> (`.obsidian/plugins/*/main.js`) syncs both ways. Anyone who can push to the
+> git remote can make every device run their code. Exclude
+> `community-plugin-data` if others (or tools) can push to the remote.
 
 `OBSIDIAN_GIT_SYNC_CONFIGS` controls which `.obsidian` settings are synced:
 
@@ -675,8 +702,8 @@ grep -q 'max_user_watches' /boot/config/go || \
 
 ## Development
 
-The test suite builds the image and runs everything in Docker; no Obsidian
-account or network access is needed (obsidian-headless is replaced by a
+The test suite builds the image and runs everything in Docker, the only
+prerequisite. No Obsidian account or network access is needed (obsidian-headless is replaced by a
 stub):
 
 ```sh
