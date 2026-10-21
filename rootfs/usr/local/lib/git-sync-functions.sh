@@ -12,26 +12,141 @@
 # =============================================================================
 
 # ---------------------------------------------------------------------------
-# Pull from remote — rebase first, merge fallback if rebase fails
+# Pull from remote — integrate origin/BRANCH without stopping mid-way
 #
-# Strategy:
-#   1. Try git pull --rebase (linear history, clean)
-#   2. If rebase fails (conflicts), abort and fall back to merge with
-#      -X ours (local/Obsidian content wins conflicts, remote history
-#      is fully preserved in the merge commit)
-#   3. --allow-unrelated-histories handles the case where local and
-#      remote were initialized independently (e.g., container started
-#      against an empty remote, then the remote was initialized
-#      separately from another machine)
+# obsidian-headless watches /vault and uploads whatever it finds there, to
+# every device. So git must never leave the working tree in an in-between
+# state: no rebase or merge in progress, no conflict markers, no files
+# reverted by an abort. Instead of `git pull`, the remote is integrated
+# file by file:
 #
-# Returns 0 on success or if remote is empty. Returns 1 on failure.
-# On failure, local commits are preserved — the caller should still
-# attempt to push (which will fail on divergence but succeed if the
-# issue was transient).
+#   - no local commits since the remote          -> fast-forward
+#   - otherwise, for each file the remote changed since the merge base:
+#       unchanged locally                        -> take the remote version
+#       same content on both sides               -> nothing to do
+#       Markdown changed on both, no overlap     -> three-way merged result
+#       anything else changed on both sides      -> keep the local file, write
+#                                                   the remote version next to
+#                                                   it as "<name> (GitHub
+#                                                   conflict <stamp>).<ext>"
+#       deleted remotely                         -> delete if unchanged
+#                                                   locally, else keep
+#       changed remotely, deleted locally        -> stays deleted, remote
+#                                                   version as conflict copy
+#   - record a merge commit (parents: HEAD and the remote) of the result
+#
+# "Locally" means the file on disk, not HEAD, so a write ob sync makes
+# while this runs is treated as a local change instead of being overwritten.
+# Each file is written to .git/ and renamed into place, so ob sync never
+# reads a half-written file. A crash at any point leaves only ordinary
+# files; the next cycle commits them and integrates again, idempotently.
+#
+# Unrelated histories (remote initialized separately) use an empty base, so
+# every file present on both sides with different content gets a conflict
+# copy.
+#
+# Returns 0 on success or if the remote branch does not exist yet.
+# Returns 1 on failure; local commits are kept and the next cycle retries.
 # ---------------------------------------------------------------------------
+EMPTY_TREE=4b825dc642cb6eb9a060e54bf8d69288fbee4904
+INTEGRATE_TMP=".git/ogb-integrate"
+
+_vgit() { git -C "${VAULT}" "$@"; }
+
+# _blob_on_disk <path> — blob id of the file in the vault, or "" if absent.
+# hash-object applies clean filters (git-lfs), so it matches committed blobs.
+_blob_on_disk() {
+  if [ -f "${VAULT}/$1" ]; then
+    _vgit hash-object -- "$1"
+  else
+    echo ""
+  fi
+}
+
+# _blob_at <rev> <path> — blob id of path at rev, or "" if absent
+_blob_at() {
+  _vgit rev-parse -q --verify "$1:$2" 2>/dev/null || echo ""
+}
+
+# _place <file in INTEGRATE_TMP> <vault-relative destination>
+_place() {
+  mkdir -p "$(dirname "${VAULT}/$2")" && mv -f "${VAULT}/${INTEGRATE_TMP}/$1" "${VAULT}/$2"
+}
+
+# _conflict_name "dir/note.md" -> "dir/note (GitHub conflict 2026-10-21 0915).md"
+_conflict_name() {
+  _cn_dir="$(dirname "$1")"
+  _cn_file="$(basename "$1")"
+  case "${_cn_file}" in
+    ?*.*) _cn_new="${_cn_file%.*} (GitHub conflict ${STAMP}).${_cn_file##*.}" ;;
+    *)    _cn_new="${_cn_file} (GitHub conflict ${STAMP})" ;;
+  esac
+  if [ "${_cn_dir}" = "." ]; then
+    printf '%s' "${_cn_new}"
+  else
+    printf '%s/%s' "${_cn_dir}" "${_cn_new}"
+  fi
+}
+
+# _integrate_file <status> <path> — apply one remote change (see above).
+# Uses base, remote. Increments conflicts. Returns 1 if a write failed.
+_integrate_file() {
+  _st="$1"
+  _p="$2"
+  _base_blob="$(_blob_at "${base}" "${_p}")"
+  _remote_blob="$(_blob_at "${remote}" "${_p}")"
+  _local_blob="$(_blob_on_disk "${_p}")"
+
+  [ "${_local_blob}" = "${_remote_blob}" ] && return 0   # already identical
+
+  if [ "${_local_blob}" = "${_base_blob}" ]; then
+    # Unchanged locally: take the remote side as is.
+    if [ "${_st}" = D ]; then
+      rm -f "${VAULT}/${_p}"
+      return 0
+    fi
+    _vgit cat-file --filters "${remote}:${_p}" > "${VAULT}/${INTEGRATE_TMP}/file" &&
+      _place file "${_p}"
+    return
+  fi
+
+  # Changed on both sides.
+  if [ "${_st}" = D ]; then
+    log "Kept ${_p}: deleted on GitHub, changed in Obsidian"
+    return 0
+  fi
+
+  case "${_p}" in
+    *.md)
+      if [ -n "${_local_blob}" ]; then
+        if [ -n "${_base_blob}" ]; then
+          _vgit cat-file blob "${_base_blob}" > "${VAULT}/${INTEGRATE_TMP}/base" || return 1
+        else
+          : > "${VAULT}/${INTEGRATE_TMP}/base"
+        fi
+        _vgit cat-file blob "${_remote_blob}" > "${VAULT}/${INTEGRATE_TMP}/theirs" || return 1
+        cp "${VAULT}/${_p}" "${VAULT}/${INTEGRATE_TMP}/ours" || return 1
+        if git merge-file -q "${VAULT}/${INTEGRATE_TMP}/ours" \
+             "${VAULT}/${INTEGRATE_TMP}/base" "${VAULT}/${INTEGRATE_TMP}/theirs"; then
+          _place ours "${_p}" || return 1
+          log "Merged ${_p} (changed on both sides, no overlapping lines)"
+          return 0
+        fi
+      fi
+      ;;
+  esac
+
+  _copy="$(_conflict_name "${_p}")"
+  _vgit cat-file --filters "${remote}:${_p}" > "${VAULT}/${INTEGRATE_TMP}/file" &&
+    _place file "${_copy}" || return 1
+  conflicts=$((conflicts + 1))
+  log_error "CONFLICT: ${_p} changed in Obsidian and on GitHub. Kept the Obsidian version;"
+  log_error "the GitHub version is saved as '${_copy}'. Merge by hand and delete the copy."
+}
+
 do_pull() {
   # Check if the remote branch exists yet. On a brand-new bare repo the
-  # remote has no branches at all — pulling would fail with
+  # remote has no branches at all — fetching would fail with
   # "couldn't find remote ref <branch>".
   #
   # We cache the result after the first successful push to avoid a network
@@ -45,41 +160,78 @@ do_pull() {
     fi
   fi
 
-  # Strategy 1: Rebase (preferred — keeps linear history)
-  # --allow-unrelated-histories handles independently initialized repos.
-  # The exit code of the command substitution is tested via && — this is
-  # correct in BusyBox ash (the assignment propagates the subcommand's
-  # exit code to the && test).
-  pull_output="$(git -C "${VAULT}" pull --rebase --allow-unrelated-histories origin "${BRANCH}" 2>&1)" && {
-    log "Pulled from origin/${BRANCH} (rebase)"
-    return 0
-  }
+  if ! fetch_output="$(_vgit fetch --quiet origin "${BRANCH}" 2>&1)"; then
+    log_error "git fetch failed: ${fetch_output}"
+    log_error "Local commits are safe. Pull will be retried on the next cycle."
+    return 1
+  fi
+  remote="$(_vgit rev-parse "origin/${BRANCH}")"
 
-  # Rebase failed — log at info level since we have a fallback.
-  # Only escalate to log_error if both strategies fail.
-  log "Rebase failed, attempting merge fallback..."
+  # Up to date, or only local commits to push.
+  _vgit merge-base --is-ancestor "${remote}" HEAD && return 0
 
-  # Abort the failed rebase to restore the working tree
-  git -C "${VAULT}" rebase --abort 2>/dev/null || true
+  # Commit whatever ob sync wrote since the last cycle.
+  _vgit add -A || { log_error "git add failed"; return 1; }
+  if ! _vgit diff --cached --quiet; then
+    _vgit commit --quiet -m "vault sync: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" ||
+      { log_error "git commit failed"; return 1; }
+  fi
 
-  # Strategy 2: Merge fallback with local wins (-X ours)
-  # Creates a merge commit but preserves ALL history from both sides.
-  # -X ours: for conflicting hunks, keep the local (Obsidian) version.
-  # Non-conflicting remote changes are still merged in normally.
-  merge_output="$(git -C "${VAULT}" pull --no-rebase --allow-unrelated-histories -X ours origin "${BRANCH}" 2>&1)" && {
-    log "Pulled from origin/${BRANCH} (merge, local wins)"
-    log_error "WARNING: Merge fallback was used — remote changes were merged with local"
-    log_error "content taking priority for any conflicts. Files from the remote may"
-    log_error "have appeared in your vault and will be synced to all Obsidian devices."
-    log_error "Review /vault for unexpected files if the remote was independently initialized."
-    return 0
-  }
+  if _vgit merge-base --is-ancestor HEAD "${remote}"; then
+    # git refuses (and changes nothing) if ob sync wrote a file the
+    # fast-forward would overwrite; the next cycle commits it and merges.
+    if ff_output="$(_vgit merge --ff-only --quiet "${remote}" 2>&1)"; then
+      log "Pulled from origin/${BRANCH} (fast-forward)"
+      return 0
+    fi
+    log_error "Fast-forward failed (will retry next cycle): ${ff_output}"
+    return 1
+  fi
 
-  # Both strategies failed — this is unusual (e.g., network error, lock file)
-  log_error "git pull failed (both rebase and merge strategies):"
-  log_error "${merge_output}"
-  log_error "Local commits are safe. Pull will be retried on the next cycle."
-  return 1
+  base="$(_vgit merge-base HEAD "${remote}" 2>/dev/null || echo "${EMPTY_TREE}")"
+  STAMP="$(date -u '+%Y-%m-%d %H%M')"
+  conflicts=0
+  rm -rf "${VAULT:?}/${INTEGRATE_TMP}"
+  mkdir -p "${VAULT}/${INTEGRATE_TMP}"
+
+  _vgit -c core.quotePath=false diff --no-renames --name-status "${base}" "${remote}" \
+    > "${VAULT}/${INTEGRATE_TMP}/changes" || { log_error "git diff failed"; return 1; }
+  # Paths with tabs, newlines or quotes are printed quoted; refuse rather
+  # than misread them.
+  if grep -q "$(printf '\t')\"" "${VAULT}/${INTEGRATE_TMP}/changes"; then
+    log_error "Remote changes include a path with special characters git quotes:"
+    log_error "$(grep "$(printf '\t')\"" "${VAULT}/${INTEGRATE_TMP}/changes" | head -n 3)"
+    log_error "Not integrating origin/${BRANCH}. Rename the file on GitHub."
+    return 1
+  fi
+
+  failed=false
+  while IFS="$(printf '\t')" read -r status path; do
+    _integrate_file "${status}" "${path}" || {
+      log_error "Could not write ${path}"
+      failed=true
+    }
+  done < "${VAULT}/${INTEGRATE_TMP}/changes"
+  rm -rf "${VAULT:?}/${INTEGRATE_TMP}"
+
+  if "${failed}"; then
+    log_error "Integration of origin/${BRANCH} incomplete (will retry next cycle)"
+    return 1
+  fi
+
+  _vgit add -A || { log_error "git add failed"; return 1; }
+  tree="$(_vgit write-tree)" &&
+    commit="$(_vgit commit-tree "${tree}" -p HEAD -p "${remote}" \
+      -m "merge origin/${BRANCH} (conflict copies: ${conflicts})")" &&
+    _vgit update-ref -m "integrate origin/${BRANCH}" HEAD "${commit}" ||
+    { log_error "Could not record merge commit (will retry next cycle)"; return 1; }
+
+  if [ "${conflicts}" -gt 0 ]; then
+    log_error "Pulled from origin/${BRANCH} with ${conflicts} conflict(s); see CONFLICT lines above"
+  else
+    log "Pulled from origin/${BRANCH} (merged)"
+  fi
+  return 0
 }
 
 # ---------------------------------------------------------------------------
