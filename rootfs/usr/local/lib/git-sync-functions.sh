@@ -379,6 +379,11 @@ do_periodic_pull() {
     return 1
   fi
 
+  # Nothing to push yet: an empty remote cloned and no file committed.
+  if ! git -C "${VAULT}" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+    return 0
+  fi
+
   # Push whenever local is ahead: a merge commit from do_pull, or an
   # earlier commit whose push failed or was cut off at shutdown.
   if "${remote_branch_verified}" &&
